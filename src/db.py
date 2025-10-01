@@ -2,6 +2,8 @@
 import os
 from flask import Flask, jsonify, request
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from datetime import datetime
 import math 
 import numpy as np
@@ -23,6 +25,18 @@ app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///flights.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
+
+# Configure a requests.Session with retries/backoff to call the OpenSky API.
+# This avoids failing immediately on transient network errors.
+OPENSKY_URL = os.environ.get('OPENSKY_URL', 'https://opensky-network.org/api/states/all')
+OPENSKY_TIMEOUT = float(os.environ.get('OPENSKY_TIMEOUT', 20.0))
+OPENSKY_RETRIES = int(os.environ.get('OPENSKY_RETRIES', 3))
+
+session = requests.Session()
+retries = Retry(total=OPENSKY_RETRIES, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504], allowed_methods=["GET"]) 
+adapter = HTTPAdapter(max_retries=retries)
+session.mount('https://', adapter)
+session.mount('http://', adapter)
 
 class Flight(db.Model):
     __tablename__ = "flights"
@@ -146,7 +160,18 @@ def update_flights():
     global updated_at
     staleness_in_minutes = (datetime.now() - updated_at).total_seconds()/60 if updated_at else None
     if not staleness_in_minutes or staleness_in_minutes > staleness_threshold:
-        response = requests.get('https://opensky-network.org/api/states/all').json()
+        # Allow disabling the initial OpenSky fetch in environments that block outbound requests
+        if os.environ.get('SKIP_INITIAL_UPDATE', 'false').lower() == 'true' and updated_at is None:
+            print('SKIP_INITIAL_UPDATE set: skipping initial OpenSky fetch')
+            return
+        try:
+            resp = session.get(OPENSKY_URL, timeout=OPENSKY_TIMEOUT)
+            resp.raise_for_status()
+            response = resp.json()
+        except Exception as e:
+            # Network issues should not crash the server; log and return without updating
+            print(f"Warning: OpenSky fetch failed: {e}")
+            return
         states = response['states']
         
         for state in states:
