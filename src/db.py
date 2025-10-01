@@ -237,6 +237,6 @@ if __name__ == '__main__':
 
     # Bind to 0.0.0.0 so container/platforms can reach the server. Allow PORT override.
     host = os.environ.get('FLASK_HOST', '0.0.0.0')
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 10000))
     debug_flag = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
     app.run(host=host, port=port, debug=debug_flag)
