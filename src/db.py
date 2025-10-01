@@ -1,4 +1,5 @@
 
+import os
 from flask import Flask, jsonify, request
 import requests
 from datetime import datetime
@@ -17,7 +18,9 @@ updated_at = None
 staleness_threshold = 10 # Minutes
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///flights.db'
+# Allow DATABASE_URL to be set in the environment for deploys (e.g. Postgres).
+# Fallback to local sqlite for development.
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///flights.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
@@ -222,7 +225,18 @@ def geodetic_to_ecef(lat, lon, alt):
     return np.array([x, y, z])
 
 if __name__ == '__main__':
+    # Create DB tables on startup; don't let a failed update_flights() abort the server
     with app.app_context():
         db.create_all()
-        update_flights()
-    app.run(debug=True)
+        try:
+            update_flights()
+        except Exception as e:
+            # Log and continue - in many hosting environments the OpenSky API
+            # may be rate-limited or blocked during deploys.
+            print(f"Warning: initial update_flights() failed: {e}")
+
+    # Bind to 0.0.0.0 so container/platforms can reach the server. Allow PORT override.
+    host = os.environ.get('FLASK_HOST', '0.0.0.0')
+    port = int(os.environ.get('PORT', 5000))
+    debug_flag = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
+    app.run(host=host, port=port, debug=debug_flag)
