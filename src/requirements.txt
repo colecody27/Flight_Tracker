@@ -1,0 +1,5 @@
+sqlalchemy
+flask_sqlalchemy
+numpy
+requests
+flask
